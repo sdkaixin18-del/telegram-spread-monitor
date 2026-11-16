@@ -1,10 +1,10 @@
 # Telegram 代币价差监控
 
-监听指定 Telegram 群里的币名消息和价差提醒，读取 Bitget（BG）、Binance（BN）、OKX、Aster、Gate 五家的 USDT 本位永续盘口，输出价差方向和 Astro 卡片预览。
+只监听指定 Telegram 群里配置的一位成员，按数字用户 ID 匹配。读取 Bitget（BG）、Binance（BN）、OKX、Aster、Gate 五家的 USDT 本位永续盘口，输出价差方向和 Astro 卡片预览。
 
-> **测试模式 · 禁止开仓和清仓**
+> **测试模式**
 >
-> Telegram 监听只生成预览。隔离联调中创建的 Astro 测试卡保存为启用状态，并设置 `disableOpen=true` 和 `disableClose=true`，禁止开仓和清仓（平仓）。
+> Telegram 常驻监听只生成预览。断网 SDK 联调生成的 FF 卡启用，限额为 1,000 USDT、杠杆为 2 倍，卡片配置允许 Astro 按阈值开仓和清仓。
 >
 > 安装后，可以把本地项目目录交给自己使用的 AI 编程助手，按需修改设置，例如 Telegram 群与发送者、价差阈值或测试卡参数。修改后可先运行下方的离线演示核对输出。
 
@@ -45,29 +45,21 @@ Telegram 暂不能登录时，可以把消息原文直接传给 `quotes`，例�
 
 ## 用 Bot API 监听群消息
 
-此方式使用专用机器人，不需要个人 `api_id` 或登录验证码。先在 [BotFather](https://t.me/BotFather) 创建机器人，把 token 填到本机 `.env` 的 `TG_BOT_TOKEN`。然后开启 **Bot-to-Bot Communication Mode**，关闭 **Group Privacy Mode**，让有权限的人把机器人加入目标群。Telegram 也支持有管理员权限且开启机器人互通的接收机器人。用专用测试机器人，可避免和同一个 token 的 webhook 或其他消费者争抢更新。[Telegram 官方说明](https://core.telegram.org/bots/features#bot-to-bot-communication)
+此方式使用专用机器人。先在 BotFather 创建机器人，把 token 填到本机 `.env` 的 `TG_BOT_TOKEN`。关闭群隐私模式后，由有权限的人把机器人加入目标群，使它能收到群里的普通消息。 [Telegram 官方说明](https://core.telegram.org/bots/features#privacy-mode)
 
 在仓库根目录进入已安装依赖的 Python 环境后运行：
 
 ```bash
-python -m telegram_spread_monitor bot-discover --group '你的群名' --sender '提醒机器人显示名'
+python -m telegram_spread_monitor bot-discover --group '你的群名' --sender '目标成员显示名'
 ```
 
-等 提醒机器人 发一条新提醒，终端应出现 `bot_discovery_received`。把打印的群 ID 与发送者 ID 分别填入 `TG_CHAT_ID`、`TG_SENDER_ID`。如果需要查某个指定成员的 ID，就把 `--sender` 换成他的显示名或 `@用户名`。开发凭据校验成功与收到目标群消息是两步。首条新提醒没出现时，可以加 `--wait 180` 延长验证窗口。
+让 目标成员 发一条新消息，终端应出现 `bot_discovery_received`。把打印的群 ID 与他的用户 ID 分别填入 `TG_CHAT_ID`、`TG_SENDER_ID`。旧配置若同时有两个发送者字段，新版优先用 `TG_TICKER_SENDER_ID`。可以把该值迁入 `TG_SENDER_ID` 后删除旧字段。
 
 ```bash
 python -m telegram_spread_monitor listen-bot
 ```
 
 `bot_listener_started` 表示机器人凭据验证通过，`bot_message_received` 才表示收到了配置的群和发送者的消息。被接受的消息走和 `quotes` 一样的盘口计算及阈值。这里仍然只输出预览。不要同时运行 `bot-discover` 和 `listen-bot`。
-
-要按通知原文模拟，可额外配置 `TG_TICKER_SENDER_ID`，然后运行：
-
-```bash
-MIN_SPREAD_PCT=4 python -m telegram_spread_monitor listen-bot --message-preview
-```
-
-这个模式只处理上述两个发送者的新消息。价差通知按每个 `【币名】` 段落选择「开」最大的路线，开仓价差严格超过阈值才生成模拟卡片，路线照录原文，不查盘口。币名发送者发单个代码时，用五家交易所的实时永续盘口选出最大且为正的方向，再按核实的多空交易所生成模拟卡片。这一路不套用原文通知的阈值。两路都只生成本机预览。
 
 ## 用个人账号首次获取 Telegram ID
 
@@ -107,7 +99,7 @@ sqlite3 .local/monitor.sqlite3 \
 
 ## 识别和报价口径
 
-- 支持 `BTC`、`$BTC`、`BTCUSDT`、`BTC/USDT`，可在一条消息里写多枚代币。独立代码用大写，带 `$` 或明确标出 USDT 交易对时也接受小写。只接受能在至少一家的有效合约列表中核实的代码，并跳过链接、邮箱和用户名。与已上市代码完全相同的大写单词仍有歧义，正文中推荐写成 `$BTC` 或 `BTC/USDT`。
+- 支持 `BTC`、`btc`、`$BTC`、`BTCUSDT`、`BTC/USDT`。一条消息可写多枚代币，普通正文里的小写代码需带 `$` 或标出 USDT 交易对。只接受能在至少一家的有效合约列表中核实的代码，并跳过链接、邮箱和用户名。
 - `1000PEPE`、`1000SATS` 等已核对的报价单位按 `core.py` 中的 `BUNDLES` 显式转换。比如 `1000CHEEMS` 的价格除以 1,000，`1MCHEEMS` 除以 1,000,000。未知的数字前缀按原代码保留。Gate 的 `quanto_multiplier` 和 OKX 的 `ctVal` 表示每张合约的数量，盘口价格不按这两个字段缩放。
 - 合约列表默认缓存 300 秒。盘口每次重新查询。交易所未上线、合约暂停、超时、响应异常、盘口为空或过期都会在日志里说明，其他有效报价继续参与。Gate 使用订单簿最后变化的时间 `update`，其余使用盘口接口返回的报价时间。
 - 默认报价最长 3 秒、两腿报价最多相差 2 秒，本机时间需要同步。每条路线用多腿卖一和空腿买一按用户给定的公式比较。仅对两家不同交易所的有效报价计算双向价差，按未四舍五入的结果排序。至少有两家有效报价且第一名为正、严格高于 `MIN_SPREAD_PCT`，该代币才生成一张预览。这个报价只覆盖盘口第一档。
@@ -124,21 +116,21 @@ python -m telegram_spread_monitor.astro_live --token BTC
 python -m telegram_spread_monitor.astro_live --watch-log "/path/to/telegram-listener.log"
 ```
 
-第二条命令跟随已经运行的 `listen-bot --message-preview` 日志，复核启动后配置的币名发送者的第一条已识别币名消息。复核结果包含双腿指数、报价时间和跳过原因。常驻监听和单次复核的输出各自记录。
+第二条命令跟随已经运行的 `listen-bot` 日志，复核启动后收到的第一条已识别币名消息。复核结果包含双腿指数、报价时间和跳过原因。常驻监听和单次复核的输出各自记录。
 
 ### 隔离 SDK 联调
 
-盘口、指数和价差均使用交易所普通市场数据。通过复核后，Binance、OKX、Aster、Gate 两腿均使用 Gate CrossEx（GC）执行代码。任一腿是 Bitget 时，两腿使用普通交易所代码。提交前核实 CrossEx 目录内两腿对应的 USDT 永续合约均为 `live`。缺失、停用或合约身份不符的 GC 路线跳过。Aster 合约腿独立设为 1 倍。
+盘口、指数和价差均使用交易所普通市场数据。通过复核后，Binance、OKX、Aster、Gate 两腿均使用 Gate CrossEx（GC）执行代码。任一腿是 Bitget 时，两腿使用普通交易所代码。提交前核实 CrossEx 目录内两腿对应的 USDT 永续合约均为 `live`。缺失、停用或合约身份不符的 GC 路线跳过。Aster 合约腿独立设为 2 倍。
 
-同一标的和买卖方向，普通版和 GC 版共用防重记录。保存回读核对实际提交的交易所代码。测试模式继续禁止开仓和清仓。
+同一标的和买卖方向，普通版和 GC 版共用防重记录。保存回读核对实际提交的交易所代码。
 
-`astro_trial.py` 把 Telegram 流程的新预览转成启用的 FF 测试卡。测试条件为开仓价差严格高于 4%、空腿指数价高于多腿，且指数报价与标的和交易所匹配、时间有效。保存字段为 `status=true`、`disableOpen=true`、`disableClose=true`、`openPosition=0.04` 和 `maxTradeUSDT=10000`。SDK 回读确认卡片状态与禁开、禁平设置后才标记保存成功。已有 `paused` 预览仍保存为暂停。提交不明时保留本地防重记录。联调标的为 BTC、ETH。
+`astro_trial.py` 把 Telegram 流程的新预览转成启用的 FF 卡。真实开仓毛价差须严格高于 4%，且空腿指数价高于多腿。新卡上限为 1,000 USDT（`maxTradeUSDT` 和 `maxNotional`），杠杆为 2 倍。`disableOpen=false`、`disableClose=false` 允许 Astro 按开仓阈值 4% 和清仓阈值 0% 执行。SDK 回读核对这些字段后才标记保存成功。已有 `paused` 预览仍保存为暂停。提交不明时保留本地防重记录。联调标的为 BTC、ETH。
 
 联调由测试程序提供断网 Astro SDK 客户端。常驻监听只生成预览，SDK 官方文档说明新增 Pair 可能重启 Core。[Astro SDK 文档](https://raw.githubusercontent.com/astro-btc/Astro/main/SDK-API.md)
 
 Astro 官方 SDK 支持新增和读取 Pair，现有系统通过保存后回读卡片来确认成功。官方文档说明新增 Pair 可能触发 Astro Core 重启。当前 Telegram 监听只输出预览，暂未提供真实建卡开关。[Astro SDK 官方文档](https://github.com/astro-btc/Astro/blob/main/SDK-API.md#62-新增-pair)
 
-接通机器人需提供它的 `@用户名` 和一次手动保存卡片的记录。请保留代币、做多和做空交易所、命令或按钮、成功回执中的卡片标识，账号和密钥可打码。如果使用的是 Astro 网页或 SDK，请指出实际入口。接入时会按核实的入口配置，要求成功回执或卡片回读能明确对应两腿、请求状态和禁开、禁平设置。提交前持久化唯一键，提交结果不明时保留防重记录。
+接通机器人需提供它的 `@用户名` 和一次手动保存卡片的记录。请保留代币、做多和做空交易所、命令或按钮、成功回执中的卡片标识，账号和密钥可打码。如果使用的是 Astro 网页或 SDK，请指出实际入口。接入时会按核实的入口配置，要求成功回执或卡片回读能明确对应两腿、请求状态和开仓、清仓设置。提交前持久化唯一键，提交结果不明时保留防重记录。
 
 ## 验收命令
 

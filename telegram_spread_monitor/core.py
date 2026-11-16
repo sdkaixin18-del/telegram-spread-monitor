@@ -145,6 +145,7 @@ def tokens_in(text: str, catalog: Catalog) -> list[str]:
             aliases[alias] = token
     found = {}
     message = VENUE_MARKET_LABEL.sub(" ", LINK_OR_HANDLE.sub(" ", text))
+    only_symbol = message.strip()
     for match in MESSAGE_TOKEN.finditer(message):
         raw = match["ticker"]
         symbol = raw.upper()
@@ -155,7 +156,7 @@ def tokens_in(text: str, catalog: Catalog) -> list[str]:
                 symbol = symbol[:-4]
         elif symbol.endswith("USDT") and symbol not in aliases:
             symbol = symbol[:-4]
-        elif not raw.isupper():
+        elif not raw.isupper() and raw != only_symbol:
             continue
         if symbol in aliases:
             found[aliases[symbol]] = None

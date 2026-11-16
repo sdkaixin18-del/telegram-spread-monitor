@@ -1,4 +1,4 @@
-"""Convert a Telegram preview to a monitor-only FF card in an isolated Astro SDK trial."""
+"""Convert a verified Telegram market preview to an FF card in an isolated Astro SDK trial."""
 
 from __future__ import annotations
 
@@ -71,14 +71,10 @@ def build_trial_pair(preview: dict, long_index: IndexQuote, short_index: IndexQu
     requested_state = preview.get("requested_card_state")
     if preview.get("status") != "preview" or requested_state not in ("enabled", "paused"):
         raise TrialError("explicit_card_state_required")
-    if preview.get("basis") == "sender_reported_spread":
-        opening = preview.get("reported_open_spread_pct")
-    elif preview.get("market") == "USDT 线性永续":
-        opening = preview.get("gross_spread_pct")
-    else:
+    if preview.get("basis") == "sender_reported_spread" or preview.get("market") != "USDT 线性永续":
         raise TrialError("unsupported_preview_market")
     try:
-        spread = Decimal(str(opening))
+        spread = Decimal(str(preview.get("gross_spread_pct")))
     except InvalidOperation as error:
         raise TrialError("invalid_opening_spread") from error
     if not spread.is_finite() or spread <= OPEN_PCT:
@@ -99,15 +95,15 @@ def build_trial_pair(preview: dict, long_index: IndexQuote, short_index: IndexQu
         "buyEx": buy,
         "sellEx": sell,
         "status": requested_state == "enabled",
-        "disableOpen": True,
-        "disableClose": True,
+        "disableOpen": requested_state == "paused",
+        "disableClose": requested_state == "paused",
         "openPosition": "0.04",
         "closePosition": "0",
-        "maxTradeUSDT": "10000",
-        "leverage": "1",
+        "maxTradeUSDT": "1000",
+        "leverage": "2",
         "startTime": "0",
         "minNotional": "10",
-        "maxNotional": "10000",
+        "maxNotional": "1000",
     }
     if buy in GC_VENUES and sell in GC_VENUES:
         for leg, venue in ((preview["long"], buy), (preview["short"], sell)):
@@ -116,7 +112,7 @@ def build_trial_pair(preview: dict, long_index: IndexQuote, short_index: IndexQu
                 raise TrialError("gc_market_symbol_mismatch")
         pair.update(buyEx=f"gc-{buy}", sellEx=f"gc-{sell}")
     if "aster" in (buy, sell):
-        pair.update(independentLeverageSide="a" if buy == "aster" else "b", independentLeverage="1")
+        pair.update(independentLeverageSide="a" if buy == "aster" else "b", independentLeverage=pair["leverage"])
     return pair
 
 
@@ -181,7 +177,8 @@ class TrialSaver:
             for key in ("status", "disableOpen", "disableClose"):
                 if saved.get(key) is not pair[key]:
                     return "unconfirmed", None
-            if any(Decimal(str(saved.get(key))) != Decimal(pair[key]) for key in ("openPosition", "maxTradeUSDT")):
+            numeric_fields = ("openPosition", "closePosition", "maxTradeUSDT", "maxNotional", "leverage")
+            if any(Decimal(str(saved.get(key))) != Decimal(pair[key]) for key in numeric_fields):
                 return "unconfirmed", None
             if "independentLeverageSide" in pair and (
                 saved.get("independentLeverageSide") != pair["independentLeverageSide"]

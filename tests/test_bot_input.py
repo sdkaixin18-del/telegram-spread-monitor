@@ -1,13 +1,15 @@
 import io
 import json
 import unittest
+from argparse import Namespace
 from contextlib import redirect_stdout
 from decimal import Decimal
+from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 import httpx
 
-from telegram_spread_monitor.__main__ import DemoMarket
+from telegram_spread_monitor.__main__ import DemoMarket, run
 from telegram_spread_monitor.bot_input import BotApiError, BotInput, discover_bot, listen_bot
 from telegram_spread_monitor.core import Monitor, PreviewStore, Quote, Rules, now_ms
 
@@ -51,11 +53,14 @@ class BotInputTests(unittest.IsolatedAsyncioTestCase):
                 await discover_bot(BotInput(client, TEST_TOKEN), "示例群", "@example_alert", None, 5)
         self.assertEqual(output.getvalue().splitlines(), ["TG_CHAT_ID=-10001", "TG_SENDER_ID=2001"])
 
-    async def test_listener_routes_new_bot_message_through_live_spread_gate_and_dedup(self):
-        wrong_group = group_update(10, group=-10002)
-        wrong_sender = group_update(11, sender=2002)
+    async def test_listener_only_accepts_the_member_and_recomputes_live_spread(self):
+        wrong_group = group_update(10, group=-10002, message_id=44)
+        wrong_sender = group_update(11, sender=2002, message_id=43)
         valid = group_update(12)
         duplicate = group_update(13)
+        for update in (valid, duplicate, wrong_group):
+            update["message"]["from"].update(first_name="示例成员", is_bot=False)
+            update["message"]["text"] = "pepe"
         queued_offsets = []
 
         async def handler(request):
@@ -92,6 +97,22 @@ class BotInputTests(unittest.IsolatedAsyncioTestCase):
         payload, = store.db.execute("SELECT payload FROM previews").fetchone()
         self.assertEqual(json.loads(payload)["gross_spread_pct"], "4.25")
         self.assertIn("duplicate_message message_id=42", "\n".join(messages.output))
+        self.assertNotIn("bot_message_received message_id=43", "\n".join(messages.output))
+        self.assertNotIn("bot_message_received message_id=44", "\n".join(messages.output))
+
+    async def test_legacy_two_sender_configuration_selects_only_the_ticker_member(self):
+        args = Namespace(command="listen-bot", env=Path("offline-test.env"), message_preview=True)
+        settings = {"TG_CHAT_ID": "-10001", "TG_TICKER_SENDER_ID": "2002", "TG_SENDER_ID": "2001"}
+        with (
+            patch.dict("os.environ", settings, clear=True),
+            patch("dotenv.load_dotenv"),
+            patch("telegram_spread_monitor.__main__.PreviewStore", return_value=PreviewStore(":memory:")),
+            patch("telegram_spread_monitor.bot_input.BotInput"),
+            patch("telegram_spread_monitor.bot_input.listen_bot", new_callable=AsyncMock) as listen,
+        ):
+            await run(args)
+        _, monitor = listen.await_args.args
+        self.assertEqual(monitor.sender_id, 2002)
 
     async def test_long_poll_errors_do_not_expose_request_path(self):
         async def handler(request):

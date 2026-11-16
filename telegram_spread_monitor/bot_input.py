@@ -7,7 +7,6 @@ from time import monotonic
 import httpx
 
 from .core import LOG, Monitor, Signal, now_ms
-from .message_preview import MessagePreviewMonitor
 
 
 class BotApiError(ValueError):
@@ -141,25 +140,13 @@ async def discover_bot(
         if batch:
             offset = batch[-1]["update_id"] + 1
     if group_seen:
-        raise BotApiError("已收到目标群消息，但未收到指定发送者的新消息。请核对其名称和机器人互通设置。")
+        raise BotApiError("已收到目标群消息，但未收到指定发送者的新消息。请核对其名称和群隐私设置。")
     raise BotApiError("已验证机器人凭据，但未收到目标群的新消息。请确认已加群并核对群隐私设置。")
 
 
-async def listen_bot(bot: BotInput, monitor: Monitor | MessagePreviewMonitor) -> None:
+async def listen_bot(bot: BotInput, monitor: Monitor) -> None:
     await bot.verify()
-    source_only = isinstance(monitor, MessagePreviewMonitor)
-    senders = (
-        {monitor.sender_id, monitor.ticker_sender_id}
-        if source_only else {monitor.sender_id}
-    )
-    if source_only:
-        LOG.info(
-            "bot_listener_started mode=message_preview sender_count=%s "
-            "reported_min_pct=%s ticker_min_pct=%s",
-            len(senders), monitor.reported_min_pct, monitor.rules.min_spread_pct,
-        )
-    else:
-        LOG.info("bot_listener_started mode=preview min_spread_pct=%s", monitor.rules.min_spread_pct)
+    LOG.info("bot_listener_started mode=preview min_spread_pct=%s", monitor.rules.min_spread_pct)
     offset = None
     while True:
         try:
@@ -172,7 +159,7 @@ async def listen_bot(bot: BotInput, monitor: Monitor | MessagePreviewMonitor) ->
             continue
         for update in batch:
             signal = signal_from_update(update)
-            if signal is not None and signal.chat_id == monitor.chat_id and signal.sender_id in senders:
+            if signal is not None and signal.chat_id == monitor.chat_id and signal.sender_id == monitor.sender_id:
                 LOG.info("bot_message_received message_id=%s", signal.message_id)
                 await monitor.handle(signal)
             # Telegram confirms the update on the next poll. An interrupted

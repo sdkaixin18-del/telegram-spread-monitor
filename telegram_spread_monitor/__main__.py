@@ -4,7 +4,6 @@ import argparse
 import asyncio
 import logging
 import os
-from dataclasses import replace
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
@@ -91,7 +90,10 @@ async def run(args: argparse.Namespace) -> None:
     watching = args.command in {"listen", "listen-bot"}
     if watching:
         chat_id = integer_setting("TG_CHAT_ID", None, -(2**63), -1)
-        sender_id = integer_setting("TG_SENDER_ID", None, 1, 2**63 - 1)
+        # Existing installs used TG_SENDER_ID for the alert bot and the other
+        # setting for the member. Keep the member as the sole source on upgrade.
+        sender_name = "TG_TICKER_SENDER_ID" if os.getenv("TG_TICKER_SENDER_ID", "").strip() else "TG_SENDER_ID"
+        sender_id = integer_setting(sender_name, None, 1, 2**63 - 1)
 
     if args.command in {"listen", "discover"}:
         from .telegram_input import discover, listen, telegram_client
@@ -136,18 +138,6 @@ async def run(args: argparse.Namespace) -> None:
             follow_redirects=False,
         ) as client:
             market = PublicMarket(client, timeout=request_timeout, catalog_ttl=catalog_ttl)
-            if args.command == "listen-bot" and args.message_preview:
-                from .bot_input import BotInput, listen_bot
-                from .message_preview import MessagePreviewMonitor
-
-                ticker_sender_id = integer_setting("TG_TICKER_SENDER_ID", None, 1, 2**63 - 1)
-                if ticker_sender_id == sender_id:
-                    raise ValueError("两个来源必须使用不同的 Telegram 发送者 ID。")
-                ticker_rules = replace(rules, min_spread_pct=Decimal("0"))
-                ticker_monitor = Monitor(market, store, ticker_rules, chat_id, ticker_sender_id)
-                monitor = MessagePreviewMonitor(ticker_monitor, sender_id, rules.min_spread_pct)
-                await listen_bot(BotInput(client, os.getenv("TG_BOT_TOKEN", "")), monitor)
-                return
             monitor = Monitor(market, store, rules, chat_id, sender_id)
             if args.command == "listen":
                 try:
@@ -175,9 +165,7 @@ def main() -> int:
     commands.add_parser("demo", help="离线模拟消息、盘口和卡片预览")
     commands.add_parser("listen", help="登录 Telegram 监听并输出预览")
     bot_listen = commands.add_parser("listen-bot", help="用 Telegram Bot API 监听并输出预览")
-    bot_listen.add_argument(
-        "--message-preview", action="store_true", help="通知采用原文，指定成员发币名时查实时盘口",
-    )
+    bot_listen.add_argument("--message-preview", action="store_true", help=argparse.SUPPRESS)
     bot_ids = commands.add_parser("bot-discover", help="从机器人收到的新群消息获取 ID")
     bot_group = bot_ids.add_mutually_exclusive_group(required=True)
     bot_group.add_argument("--group", help="目标群显示名")

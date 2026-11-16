@@ -42,10 +42,11 @@ class TrialTests(unittest.TestCase):
     def test_settings_and_index_rejections(self):
         long, short = indices()
         pair = build_trial_pair(candidate(), long, short)
-        self.assertEqual((pair["type"], pair["openPosition"], pair["maxTradeUSDT"]), ("FF", "0.04", "10000"))
+        self.assertEqual((pair["type"], pair["openPosition"], pair["maxTradeUSDT"]), ("FF", "0.04", "1000"))
+        self.assertEqual((pair["maxNotional"], pair["leverage"]), ("1000", "2"))
         self.assertIs(pair["status"], True)
-        self.assertIs(pair["disableOpen"], True)
-        self.assertIs(pair["disableClose"], True)
+        self.assertIs(pair["disableOpen"], False)
+        self.assertIs(pair["disableClose"], False)
         self.assertEqual((pair["buyEx"], pair["sellEx"]), ("bitget", "binance"))
         for preview, quote, reason in (
             (candidate(), replace(short, price=long.price), "short_index_not_above_long"),
@@ -54,6 +55,7 @@ class TrialTests(unittest.TestCase):
             (candidate(gross_spread_pct="4"), short, "opening_spread_not_above_4pct"),
             (candidate(token="OPENAI", gross_spread_pct="931.77"), short, "asset_not_verified_for_trial"),
             (candidate(requested_card_state=None), short, "explicit_card_state_required"),
+            (candidate(basis="sender_reported_spread"), short, "unsupported_preview_market"),
         ):
             with self.subTest(reason=reason), self.assertRaisesRegex(TrialError, reason):
                 build_trial_pair(preview, long, quote)
@@ -67,7 +69,7 @@ class TrialTests(unittest.TestCase):
     def test_gc_routes_use_native_indices_and_aster_override(self):
         pair = build_trial_pair(gc_candidate(), *gc_indices())
         self.assertEqual((pair["buyEx"], pair["sellEx"]), ("gc-binance", "gc-aster"))
-        self.assertEqual((pair["independentLeverageSide"], pair["independentLeverage"]), ("b", "1"))
+        self.assertEqual((pair["independentLeverageSide"], pair["independentLeverage"]), ("b", "2"))
         long, short = gc_indices()
         reversed_pair = build_trial_pair(
             candidate(long="Aster-F", short="Binance-F"), replace(long, venue="aster"), replace(short, venue="binance"),
@@ -131,8 +133,10 @@ class TrialTests(unittest.TestCase):
         for changes, result in (
             ({}, ("saved_enabled", "abc1234567")),
             ({"status": False}, ("unconfirmed", None)),
-            ({"disableOpen": False}, ("unconfirmed", None)),
-            ({"disableClose": False}, ("unconfirmed", None)),
+            ({"disableOpen": True}, ("unconfirmed", None)),
+            ({"disableClose": True}, ("unconfirmed", None)),
+            ({"leverage": "1"}, ("unconfirmed", None)),
+            ({"maxNotional": "10000"}, ("unconfirmed", None)),
         ):
             with self.subTest(changes=changes):
                 db = sqlite3.connect(":memory:")
