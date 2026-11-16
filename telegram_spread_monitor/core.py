@@ -43,6 +43,11 @@ LINK_OR_HANDLE = re.compile(
     r"(?:[A-Z][A-Z0-9+.-]*://|www\.|t\.me/)[^\s，。；、]+"
     r"|[A-Z0-9._+-]+@[A-Z0-9.-]+\.[A-Z]{2,}|@[A-Z0-9_]+", re.IGNORECASE
 )
+VENUE_MARKET_LABEL = re.compile(
+    r"(?<![A-Z0-9_@$])(?:Binance|BN|Bitget|BG|Bybit|OKX|Aster|Gate(?:\.io)?|Hyperliquid)"
+    r"[-‐‑–—][FS](?![A-Z0-9_]|\s*[/_-]\s*USDT\b)",
+    re.IGNORECASE | re.ASCII,
+)
 
 
 def now_ms() -> int:
@@ -138,7 +143,8 @@ def tokens_in(text: str, catalog: Catalog) -> list[str]:
         if token in aliases:
             aliases[alias] = token
     found = {}
-    for match in MESSAGE_TOKEN.finditer(LINK_OR_HANDLE.sub(" ", text)):
+    message = VENUE_MARKET_LABEL.sub(" ", LINK_OR_HANDLE.sub(" ", text))
+    for match in MESSAGE_TOKEN.finditer(message):
         raw = match["ticker"]
         symbol = raw.upper()
         if match["pair"] or match["dollar"]:
@@ -287,9 +293,9 @@ class Monitor:
             token, " | ".join(f"{route.direction} {route.gross_pct:+.4f}%" for route in routes),
         )
         best = routes[0]
-        if best.gross_pct <= 0 or best.gross_pct < self.rules.min_spread_pct:
+        if best.gross_pct <= max(Decimal("0"), self.rules.min_spread_pct):
             LOG.info(
-                "token_skipped token=%s reason=below_threshold gross_pct=%s threshold_pct=%s",
+                "token_skipped token=%s reason=threshold_not_exceeded gross_pct=%s threshold_pct=%s",
                 token, best.gross_pct, self.rules.min_spread_pct,
             )
             return

@@ -1,6 +1,6 @@
 # Telegram 代币价差监控
 
-监听指定 Telegram 群中指定成员发出的代币代码，读取 Bitget（BG）、Binance（BN）、OKX、Aster、Gate 五家的 USDT 本位永续盘口，为每个代币输出最佳正价差方向的 Astro 卡片预览。预览请求卡片保持暂停。本项目没有下单入口。
+监听指定 Telegram 群里配置的币名消息和价差提醒，读取 Bitget（BG）、Binance（BN）、OKX、Aster、Gate 五家的 USDT 本位永续盘口，为每个代币输出最佳正价差方向的 Astro 卡片预览。预览请求卡片保持暂停。本项目没有下单入口。
 
 ## 先跑离线演示
 
@@ -33,9 +33,37 @@ python -m pip install -r requirements.txt
 python -m telegram_spread_monitor quotes 'BTC, $PEPE'
 ```
 
-`quotes` 使用真实公开盘口，无需 Telegram 或交易所凭据。五家请求并行发出，每个代币使用独立的盘口批次。默认最低毛价差为 **0.10%**，结果低于阈值时可在 `spread_ranked` 核对双向排序。没有有效路径时会记录原因。可用 `MIN_SPREAD_PCT=0` 运行一次查询，查看所有高于零的最佳方向。
+`quotes` 使用真实公开盘口，无需 Telegram 或交易所凭据。五家请求并行发出，每个代币使用独立的盘口批次。毛价差必须严格高于 `MIN_SPREAD_PCT` 才会输出预览，模板阈值为 **0.10%**。例如 `MIN_SPREAD_PCT=4` 表示实时毛价差必须大于 4%。结果未超过阈值时，可在 `spread_ranked` 核对双向排序。没有有效路径时会记录原因。
 
-## 首次获取 Telegram ID
+Telegram 暂不能登录时，可以把消息原文直接传给 `quotes`，例如 `python -m telegram_spread_monitor quotes '🔔 价差通知【SOPH】 Binance-F → Bybit-F'`。程序忽略其中的交易所标签，用当前盘口重新计算。此方式可测试内容识别，不验证群消息接收和发送者过滤。
+
+## 用 Bot API 监听群消息
+
+此方式使用专用机器人，不需要个人 `api_id` 或登录验证码。先在 [BotFather](https://t.me/BotFather) 创建机器人，把 token 填到本机 `.env` 的 `TG_BOT_TOKEN`。然后开启 **Bot-to-Bot Communication Mode**，关闭 **Group Privacy Mode**，让有权限的人把机器人加入目标群。Telegram 也支持有管理员权限且开启机器人互通的接收机器人。用专用测试机器人，可避免和同一个 token 的 webhook 或其他消费者争抢更新。[Telegram 官方说明](https://core.telegram.org/bots/features#bot-to-bot-communication)
+
+在仓库根目录进入已安装依赖的 Python 环境后运行：
+
+```bash
+python -m telegram_spread_monitor bot-discover --group '你的群名' --sender '提醒机器人显示名'
+```
+
+等 提醒机器人 发一条新提醒，终端应出现 `bot_discovery_received`。把打印的群 ID 与发送者 ID 分别填入 `TG_CHAT_ID`、`TG_SENDER_ID`。如果需要查某个指定成员的 ID，就把 `--sender` 换成他的显示名或 `@用户名`。开发凭据校验成功与收到目标群消息是两步。首条新提醒没出现时，可以加 `--wait 180` 延长验证窗口。
+
+```bash
+python -m telegram_spread_monitor listen-bot
+```
+
+`bot_listener_started` 表示机器人凭据验证通过，`bot_message_received` 才表示收到了配置的群和发送者的消息。被接受的消息走和 `quotes` 一样的盘口计算及阈值。这里仍然只输出预览。不要同时运行 `bot-discover` 和 `listen-bot`。
+
+要按通知原文模拟，可额外配置 `TG_TICKER_SENDER_ID`，然后运行：
+
+```bash
+MIN_SPREAD_PCT=4 python -m telegram_spread_monitor listen-bot --message-preview
+```
+
+这个模式只处理上述两个发送者的新消息。价差通知按每个 `【币名】` 段落选择「开」最大的路线，开仓价差严格超过阈值才生成模拟卡片，路线照录原文，不查盘口。币名发送者发单个代码时，用五家交易所的实时永续盘口选出最大且为正的方向，再按核实的多空交易所生成模拟卡片。这一路不套用原文通知的阈值。两路都只生成本机预览。
+
+## 用个人账号首次获取 Telegram ID
 
 1. 用已经加入目标群的 Telegram 个人账号在 [Telegram API 开发页面](https://my.telegram.org/apps) 创建应用，取得 `api_id` 和 `api_hash`。程序使用本地 Telethon 会话。首次运行时在终端输入手机号和验证码，若开启二步验证，还会提示输入密码。
 2. 复制本地配置，填入 `TG_API_ID` 和 `TG_API_HASH`。
@@ -76,8 +104,10 @@ sqlite3 .local/monitor.sqlite3 \
 - 支持 `BTC`、`$BTC`、`BTCUSDT`、`BTC/USDT`，可在一条消息里写多枚代币。独立代码用大写，带 `$` 或明确标出 USDT 交易对时也接受小写。只接受能在至少一家的有效合约列表中核实的代码，并跳过链接、邮箱和用户名。与已上市代码完全相同的大写单词仍有歧义，正文中推荐写成 `$BTC` 或 `BTC/USDT`。
 - `1000PEPE`、`1000SATS` 等已核对的报价单位按 `core.py` 中的 `BUNDLES` 显式转换。比如 `1000CHEEMS` 的价格除以 1,000，`1MCHEEMS` 除以 1,000,000。未知的数字前缀按原代码保留。Gate 的 `quanto_multiplier` 和 OKX 的 `ctVal` 表示每张合约的数量，盘口价格不按这两个字段缩放。
 - 合约列表默认缓存 300 秒。盘口每次重新查询。交易所未上线、合约暂停、超时、响应异常、盘口为空或过期都会在日志里说明，其他有效报价继续参与。Gate 使用订单簿最后变化的时间 `update`，其余使用盘口接口返回的报价时间。
-- 默认报价最长 3 秒、两腿报价最多相差 2 秒，本机时间需要同步。每条路线用多腿卖一和空腿买一按用户给定的公式比较。仅对两家不同交易所的有效报价计算双向价差，按未四舍五入的结果排序。至少有两家有效报价且第一名为正、达到 `MIN_SPREAD_PCT`，该代币才生成一张预览。这个报价只覆盖盘口第一档。
+- 默认报价最长 3 秒、两腿报价最多相差 2 秒，本机时间需要同步。每条路线用多腿卖一和空腿买一按用户给定的公式比较。仅对两家不同交易所的有效报价计算双向价差，按未四舍五入的结果排序。至少有两家有效报价且第一名为正、严格高于 `MIN_SPREAD_PCT`，该代币才生成一张预览。这个报价只覆盖盘口第一档。
 - 盘口来源：[Bitget](https://www.bitget.com/docs/catalog/classic-contract-market/classic-contract-market)、[Binance USDⓈ-M](https://developers.binance.com/en/docs/catalog/core-trading-derivatives-trading-usd-s-m-futures/api/rest-api/market-data)、[OKX V5](https://www.okx.com/docs-v5/en/)、[Aster Futures V3](https://asterdex.github.io/aster-api-website/futures-v3/market-data/)、[Gate API V4](https://www.gate.com/docs/developers/apiv4/en/futures/)。
+
+**已知限制。** 目前程序不会自动识别 Pre-IPO 合约的股数基准或拆分比例。同一标的在不同所的报价单位可能不同，例如 OKX 对 OPENAI 的 10 倍拆分。这会让直接比较得出的价差失真，相关预览需先按合约规格复核。[OKX 拆分公告](https://www.okx.com/en-sg/help/okx-to-execute-rebase-on-openaiusdt-and-anthropicusdt-pre-market-perpetual)
 
 ## 真实 Astro 建卡
 

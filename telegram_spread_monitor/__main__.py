@@ -4,6 +4,7 @@ import argparse
 import asyncio
 import logging
 import os
+from dataclasses import replace
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
@@ -87,10 +88,12 @@ async def run(args: argparse.Namespace) -> None:
     dotenv_path = args.env.expanduser().resolve()
     load_dotenv(dotenv_path, interpolate=False)
 
+    watching = args.command in {"listen", "listen-bot"}
+    if watching:
+        chat_id = integer_setting("TG_CHAT_ID", None, -(2**63), -1)
+        sender_id = integer_setting("TG_SENDER_ID", None, 1, 2**63 - 1)
+
     if args.command in {"listen", "discover"}:
-        if args.command == "listen":
-            chat_id = integer_setting("TG_CHAT_ID", None, -(2**63), -1)
-            sender_id = integer_setting("TG_SENDER_ID", None, 1, 2**63 - 1)
         from .telegram_input import discover, listen, telegram_client
 
         session_path = dotenv_path.parent / Path(
@@ -106,13 +109,21 @@ async def run(args: argparse.Namespace) -> None:
 
     import httpx
 
+    if args.command == "bot-discover":
+        from .bot_input import BotInput, discover_bot
+
+        async with httpx.AsyncClient(follow_redirects=False) as client:
+            bot = BotInput(client, os.getenv("TG_BOT_TOKEN", ""))
+            await discover_bot(bot, args.group, args.sender, args.group_id, args.wait)
+        return
+
     from .market import PublicMarket
 
     rules = rules_from_env()
     request_timeout = float(decimal_setting("HTTP_TIMEOUT_SECONDS", "2", "0.1", "15"))
     catalog_ttl = integer_setting("CONTRACT_CACHE_SECONDS", 300, 1, 3600)
     state_path: Path | str = ":memory:"
-    if args.command == "listen":
+    if watching:
         state_path = dotenv_path.parent / Path(
             os.getenv("STATE_DB_PATH") or ".local/monitor.sqlite3"
         ).expanduser()
@@ -125,12 +136,29 @@ async def run(args: argparse.Namespace) -> None:
             follow_redirects=False,
         ) as client:
             market = PublicMarket(client, timeout=request_timeout, catalog_ttl=catalog_ttl)
+            if args.command == "listen-bot" and args.message_preview:
+                from .bot_input import BotInput, listen_bot
+                from .message_preview import MessagePreviewMonitor
+
+                ticker_sender_id = integer_setting("TG_TICKER_SENDER_ID", None, 1, 2**63 - 1)
+                if ticker_sender_id == sender_id:
+                    raise ValueError("两个来源必须使用不同的 Telegram 发送者 ID。")
+                ticker_rules = replace(rules, min_spread_pct=Decimal("0"))
+                ticker_monitor = Monitor(market, store, ticker_rules, chat_id, ticker_sender_id)
+                monitor = MessagePreviewMonitor(ticker_monitor, sender_id, rules.min_spread_pct)
+                await listen_bot(BotInput(client, os.getenv("TG_BOT_TOKEN", "")), monitor)
+                return
             monitor = Monitor(market, store, rules, chat_id, sender_id)
             if args.command == "listen":
                 try:
                     await listen(tg, monitor)
                 finally:
                     await tg.disconnect()
+            elif args.command == "listen-bot":
+                from .bot_input import BotInput, listen_bot
+
+                bot = BotInput(client, os.getenv("TG_BOT_TOKEN", ""))
+                await listen_bot(bot, monitor)
             else:
                 LOG.info("market_check_started mode=public_quotes")
                 await monitor.handle(Signal(chat_id, sender_id, 1, args.text, now_ms()))
@@ -146,10 +174,20 @@ def main() -> int:
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser("demo", help="离线模拟消息、盘口和卡片预览")
     commands.add_parser("listen", help="登录 Telegram 监听并输出预览")
+    bot_listen = commands.add_parser("listen-bot", help="用 Telegram Bot API 监听并输出预览")
+    bot_listen.add_argument(
+        "--message-preview", action="store_true", help="通知采用原文，指定成员发币名时查实时盘口",
+    )
+    bot_ids = commands.add_parser("bot-discover", help="从机器人收到的新群消息获取 ID")
+    bot_group = bot_ids.add_mutually_exclusive_group(required=True)
+    bot_group.add_argument("--group", help="目标群显示名")
+    bot_group.add_argument("--group-id", type=int, help="已知的目标群负数 ID")
+    bot_ids.add_argument("--sender", required=True, help="发送者显示名或 @用户名")
+    bot_ids.add_argument("--wait", type=int, choices=range(5, 301), metavar="5–300", default=60)
     ids = commands.add_parser("discover", help="从目标群聊天记录获取 Telegram ID")
-    group_selector = ids.add_mutually_exclusive_group(required=True)
-    group_selector.add_argument("--group", help="当前显示的 Telegram 群名")
-    group_selector.add_argument("--group-id", type=int, help="有重名群时可指定带负号的群 ID")
+    user_group = ids.add_mutually_exclusive_group(required=True)
+    user_group.add_argument("--group", help="当前显示的 Telegram 群名")
+    user_group.add_argument("--group-id", type=int, help="有重名群时可指定带负号的群 ID")
     ids.add_argument("--sender", required=True, help="当前显示的成员名")
     ids.add_argument("--limit", type=int, choices=range(1, 1001), metavar="1–1000", default=200)
     check = commands.add_parser("quotes", help="直接查询公开盘口，无需登录 Telegram")

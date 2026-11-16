@@ -47,6 +47,18 @@ class MonitorTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(tokens_in("hello btc @BTC https://example.org/BTC", catalog), [])
         self.assertEqual(tokens_in('BTC/USDT $pepe', catalog), ["BTC", "PEPE"])
 
+    async def test_exchange_labels_do_not_look_like_tokens(self):
+        catalog = {"BN": {
+            ticker: Contract("BN", ticker + "USDT", ticker)
+            for ticker in ("SOPH", "F", "S", "ASTER")
+        }}
+        self.assertEqual(
+            tokens_in("🔔 价差通知【SOPH】 Binance-F → Bybit-F | ASTER–S | Gate.io-F", catalog),
+            ["SOPH"],
+        )
+        self.assertEqual(tokens_in("Binance-F → Bybit-F，F，$S，ASTER/USDT", catalog), ["F", "S", "ASTER"])
+        self.assertEqual(tokens_in("F/USDT", catalog), ["F"])
+
     async def test_all_directions_and_quote_time_skew(self):
         timestamp = now_ms()
         bg = Quote(Contract("BG", "PEPEUSDT", "PEPE"), Decimal("0.0999"), Decimal("0.1000"), timestamp)
@@ -98,15 +110,35 @@ class MonitorTests(unittest.IsolatedAsyncioTestCase):
         self.addCleanup(store.close)
         signal = Signal(-123, 10, 42, "$PEPE", now_ms())
         catalog = await DemoMarket().catalog()
-        monitor = Monitor(DemoMarket(), store, Rules(min_spread_pct=Decimal("1.5001")), -123, 10)
+        monitor = Monitor(DemoMarket(), store, Rules(min_spread_pct=Decimal("1.50")), -123, 10)
         await monitor.preview(signal, "PEPE", catalog)
         self.assertEqual(store.db.execute("SELECT count(*) FROM previews").fetchone(), (0,))
-        monitor = Monitor(DemoMarket(), store, Rules(min_spread_pct=Decimal("1.50")), -123, 10)
+        monitor = Monitor(DemoMarket(), store, Rules(min_spread_pct=Decimal("1.49")), -123, 10)
         await monitor.preview(signal, "PEPE", catalog)
         self.assertFalse(store.seen(signal))
         await monitor.handle(signal)
         self.assertTrue(store.seen(signal))
         self.assertEqual(store.db.execute("SELECT count(*) FROM previews").fetchone(), (1,))
+
+    async def test_only_live_spreads_strictly_above_four_percent_create_preview(self):
+        market = DemoMarket()
+        catalog = await market.catalog()
+        store = PreviewStore(":memory:")
+        self.addCleanup(store.close)
+        monitor = Monitor(market, store, Rules(min_spread_pct=Decimal("4")), -123, 10)
+        signal = Signal(-123, 10, 42, "【PEPE】Binance-F → Bitget-F：开 +8.00% / 清 -9.00%", now_ms())
+        for bid, expected in (("0.1039999", 0), ("0.1040000", 0), ("0.1040001", 1)):
+            with self.subTest(bid=bid):
+                ts = now_ms()
+                quotes = {
+                    "BG": Quote(catalog["BG"]["PEPE"], Decimal("0.0999"), Decimal("0.1000"), ts),
+                    "BN": Quote(catalog["BN"]["PEPE"], Decimal(bid) * 1000, Decimal("105"), ts),
+                }
+                with patch.object(market, "quotes", new=AsyncMock(return_value=quotes)):
+                    await monitor.preview(signal, "PEPE", catalog)
+                self.assertEqual(store.db.execute("SELECT count(*) FROM previews").fetchone(), (expected,))
+        payload, = store.db.execute("SELECT payload FROM previews").fetchone()
+        self.assertEqual(json.loads(payload)["gross_spread_pct"], "4.0001")
 
     async def test_telegram_new_message_routes_only_the_configured_ids(self):
         event = SimpleNamespace(
