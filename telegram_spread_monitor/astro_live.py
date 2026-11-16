@@ -15,6 +15,7 @@ import httpx
 from websockets.asyncio.client import connect
 from websockets.exceptions import WebSocketException
 
+from .astro_gc import GC_SYMBOLS_PATH, GC_VENUES, gc_market_rejection, gc_symbols
 from .astro_trial import OPEN_PCT, TEST_ASSETS, VENUE_MAP, IndexQuote, TrialError, build_trial_pair
 from .core import REQUESTED_CARD_STATE, VENUES, Contract, Quote, now_ms, ranked_routes, utc_text
 from .market import (
@@ -130,6 +131,8 @@ async def preflight(market: PublicMarket, token: str, message_id: int | None) ->
     report["as_of_utc"] = utc_text(measured_at)
     report["sources"] = sources
     report["routes"] = output = []
+    gc_catalogue = None
+    gc_catalogue_checked = False
     for route in ranked_routes([book for book, _ in valid.values()], MAX_SKEW_MS):
         long_index = valid[route.long.contract.venue][1]
         short_index = valid[route.short.contract.venue][1]
@@ -151,6 +154,22 @@ async def preflight(market: PublicMarket, token: str, message_id: int | None) ->
             }, long_index, short_index)
         except TrialError as error:
             result["reason"] = str(error)
+            continue
+        symbols = gc_symbols(pair)
+        if symbols:
+            if not gc_catalogue_checked:
+                gc_catalogue_checked = True
+                try:
+                    requested = ",".join(f"{venue.upper()}_FUTURE_{token}_USDT" for venue in sorted(GC_VENUES))
+                    gc_catalogue = await market.get("Gate", GC_SYMBOLS_PATH, {"symbols": requested})
+                except MARKET_ERRORS:
+                    pass
+            if reason := gc_market_rejection(symbols, gc_catalogue):
+                result["reason"] = reason
+                continue
+        reviewed_at = now_ms()
+        if any(not -1000 <= reviewed_at - timestamp <= MAX_AGE_MS for timestamp in times):
+            result["reason"] = "stale_book_or_index_after_gc_check"
             continue
         return {**report, "status": "depth_review_required", "candidate": pair}
 

@@ -128,6 +128,10 @@ python -m telegram_spread_monitor.astro_live --watch-log "/path/to/telegram-list
 
 ### 隔离 SDK 联调
 
+盘口、指数和价差均使用交易所普通市场数据。通过复核后，Binance、OKX、Aster、Gate 两腿均使用 Gate CrossEx（GC）执行代码。任一腿是 Bitget 时，两腿使用普通交易所代码。提交前核实 CrossEx 目录内两腿对应的 USDT 永续合约均为 `live`。缺失、停用或合约身份不符的 GC 路线跳过。Aster 合约腿独立设为 1 倍。
+
+同一标的和买卖方向，普通版和 GC 版共用防重记录。保存回读核对实际提交的交易所代码。测试模式继续禁止开仓和清仓。
+
 `astro_trial.py` 把 Telegram 流程的新预览转成启用的 FF 测试卡。测试条件为开仓价差严格高于 4%、空腿指数价高于多腿，且指数报价与标的和交易所匹配、时间有效。保存字段为 `status=true`、`disableOpen=true`、`disableClose=true`、`openPosition=0.04` 和 `maxTradeUSDT=10000`。SDK 回读确认卡片状态与禁开、禁平设置后才标记保存成功。已有 `paused` 预览仍保存为暂停。提交不明时保留本地防重记录。联调标的为 BTC、ETH。
 
 联调由测试程序提供断网 Astro SDK 客户端。常驻监听只生成预览，SDK 官方文档说明新增 Pair 可能重启 Core。[Astro SDK 文档](https://raw.githubusercontent.com/astro-btc/Astro/main/SDK-API.md)

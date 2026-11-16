@@ -25,6 +25,19 @@ def indices():
     )
 
 
+def gc_candidate():
+    return candidate(long={"exchange": "BN", "contract": "BTCUSDT"}, short={"exchange": "Aster"})
+
+
+def gc_indices():
+    long, short = indices()
+    return replace(long, venue="binance"), replace(short, venue="aster")
+
+
+def live_gc_rows(symbols):
+    return [{"symbol": symbol, "state": "live", "tag": ""} for symbol in symbols]
+
+
 class TrialTests(unittest.TestCase):
     def test_settings_and_index_rejections(self):
         long, short = indices()
@@ -33,6 +46,7 @@ class TrialTests(unittest.TestCase):
         self.assertIs(pair["status"], True)
         self.assertIs(pair["disableOpen"], True)
         self.assertIs(pair["disableClose"], True)
+        self.assertEqual((pair["buyEx"], pair["sellEx"]), ("bitget", "binance"))
         for preview, quote, reason in (
             (candidate(), replace(short, price=long.price), "short_index_not_above_long"),
             (candidate(), replace(short, venue="okx"), "index_does_not_match_route"),
@@ -49,6 +63,58 @@ class TrialTests(unittest.TestCase):
         self.assertIs(pair["status"], False)
         self.assertIs(pair["disableOpen"], True)
         self.assertIs(pair["disableClose"], True)
+
+    def test_gc_routes_use_native_indices_and_aster_override(self):
+        pair = build_trial_pair(gc_candidate(), *gc_indices())
+        self.assertEqual((pair["buyEx"], pair["sellEx"]), ("gc-binance", "gc-aster"))
+        self.assertEqual((pair["independentLeverageSide"], pair["independentLeverage"]), ("b", "1"))
+        long, short = gc_indices()
+        reversed_pair = build_trial_pair(
+            candidate(long="Aster-F", short="Binance-F"), replace(long, venue="aster"), replace(short, venue="binance"),
+        )
+        self.assertEqual(reversed_pair["independentLeverageSide"], "a")
+        with self.assertRaisesRegex(TrialError, "gc_market_symbol_mismatch"):
+            build_trial_pair(candidate(long={"exchange": "BN", "contract": "1000BTCUSDT"}, short="Aster-F"), long, short)
+
+    def test_gc_submission_requires_verified_listing_and_exact_readback(self):
+        class GcSdk:
+            def __init__(self):
+                self.rows, self.submitted = [], []
+
+            def list_pairs(self):
+                return self.rows
+
+            def add_pair(self, pair):
+                self.submitted.append(pair)
+                self.rows = [{**pair, "id": "abc1234567", "sellEx": "aster"}]
+
+        db = sqlite3.connect(":memory:")
+        self.addCleanup(db.close)
+        sdk = GcSdk()
+        for catalogue, reason in (
+            (lambda _: None, "gc_catalogue_unavailable"),
+            (lambda _: [], "gc_market_not_verified"),
+            (lambda symbols: [{**row, "tag": "other"} for row in live_gc_rows(symbols)], "gc_market_identity_changed"),
+            (lambda symbols: [{**row, "state": "suspend"} for row in live_gc_rows(symbols)], "gc_market_not_live"),
+        ):
+            with self.subTest(reason=reason), self.assertRaisesRegex(TrialError, reason):
+                TrialSaver(sdk, db, gc_catalogue=catalogue).save(-1001, gc_candidate(), *gc_indices())
+        self.assertEqual(sdk.submitted, [])
+        saver = TrialSaver(sdk, db, lambda _: None, gc_catalogue=live_gc_rows)
+        self.assertEqual(saver.save(-1001, gc_candidate(), *gc_indices()), ("unconfirmed", None))
+        replay = {**gc_candidate(), "message_id": 8}
+        self.assertEqual(saver.save(-1001, replay, *gc_indices()), ("duplicate_or_pending", None))
+        self.assertEqual(len(sdk.submitted), 1)
+        other_db = sqlite3.connect(":memory:")
+        self.addCleanup(other_db.close)
+        self.assertEqual(TrialSaver(sdk, other_db).save(-1001, replay, *gc_indices()), ("already_exists", None))
+
+    def test_original_native_route_claim_blocks_gc_submission(self):
+        db = sqlite3.connect(":memory:")
+        self.addCleanup(db.close)
+        saver = TrialSaver(None, db)
+        db.execute("INSERT INTO astro_trial_submissions VALUES (-1001, 5, 'BTC', 'binance', 'aster', NULL)")
+        self.assertEqual(saver.save(-1002, gc_candidate(), *gc_indices()), ("duplicate_or_pending", None))
 
     def test_readback_requires_the_requested_state_and_both_trade_guards(self):
         class ReadbackSdk:

@@ -47,3 +47,34 @@ class LiveIndexTest(unittest.IsolatedAsyncioTestCase):
     async def test_openai_does_not_compare_unverified_denominations(self):
         report = await preflight(TrialMarket(), "OPENAI", 10)
         self.assertEqual(report["reason"], "contract_identity_and_index_basis_unverified_for_trial")
+
+    async def test_gc_preflight_needs_cross_ex_identity(self):
+        class GcMarket:
+            async def catalog(self):
+                return {
+                    venue: {"BTC": Contract(venue, "BTCUSDT", "BTC")} if venue in {"BN", "Aster"} else "timeout"
+                    for venue in VENUES
+                }
+
+            async def get(self, venue, path, params):
+                self.requested = set(params["symbols"].split(","))
+                return self.rows
+
+        async def sample(market, contract):
+            timestamp = now_ms()
+            long = contract.venue == "BN"
+            return (
+                Quote(contract, Decimal(99 if long else 105), Decimal(100 if long else 106), timestamp),
+                IndexQuote("BTC", "binance" if long else "aster", Decimal(100 if long else 101), timestamp),
+            )
+
+        market = GcMarket()
+        market.rows = [{"symbol": "BINANCE_FUTURE_BTC_USDT", "tag": "", "state": "live"}]
+        with patch("telegram_spread_monitor.astro_live.sample_venue", side_effect=sample):
+            skipped = await preflight(market, "BTC", 10)
+            self.assertEqual(skipped["routes"][0]["reason"], "gc_market_not_verified")
+            market.rows.append({"symbol": "ASTER_FUTURE_BTC_USDT", "tag": "", "state": "live"})
+            ready = await preflight(market, "BTC", 10)
+        self.assertEqual(ready["status"], "depth_review_required")
+        self.assertTrue({row["symbol"] for row in market.rows} <= market.requested)
+        self.assertEqual((ready["candidate"]["buyEx"], ready["candidate"]["sellEx"]), ("gc-binance", "gc-aster"))

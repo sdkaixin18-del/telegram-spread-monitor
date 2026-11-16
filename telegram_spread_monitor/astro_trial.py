@@ -8,6 +8,7 @@ from decimal import Decimal, InvalidOperation
 from time import sleep
 from typing import Callable, Protocol
 
+from .astro_gc import GC_VENUES, fetch_gc_catalogue, gc_market_rejection, gc_symbols, native_exchange
 from .core import now_ms
 
 OPEN_PCT = Decimal("4")
@@ -53,6 +54,15 @@ def ff_venue(leg: object) -> str:
     return venue
 
 
+def validate_index_time(long_index: IndexQuote, short_index: IndexQuote) -> None:
+    measured_at = now_ms()
+    if (
+        any(not -1000 <= measured_at - quote.timestamp_ms <= 3000 for quote in (long_index, short_index))
+        or abs(long_index.timestamp_ms - short_index.timestamp_ms) > 2000
+    ):
+        raise TrialError("index_time_invalid")
+
+
 def build_trial_pair(preview: dict, long_index: IndexQuote, short_index: IndexQuote) -> dict:
     token = preview.get("token")
     if not isinstance(token, str) or token not in TEST_ASSETS:
@@ -78,17 +88,12 @@ def build_trial_pair(preview: dict, long_index: IndexQuote, short_index: IndexQu
         raise TrialError("same_exchange")
     if (long_index.token, long_index.venue, short_index.token, short_index.venue) != (token, buy, token, sell):
         raise TrialError("index_does_not_match_route")
-    measured_at = now_ms()
-    if (
-        any(not -1000 <= measured_at - quote.timestamp_ms <= 3000 for quote in (long_index, short_index))
-        or abs(long_index.timestamp_ms - short_index.timestamp_ms) > 2000
-    ):
-        raise TrialError("index_time_invalid")
+    validate_index_time(long_index, short_index)
     if any(not quote.price.is_finite() or quote.price <= 0 for quote in (long_index, short_index)):
         raise TrialError("invalid_index_price")
     if short_index.price <= long_index.price:
         raise TrialError("short_index_not_above_long")
-    return {
+    pair = {
         "name": token,
         "type": "FF",
         "buyEx": buy,
@@ -104,6 +109,15 @@ def build_trial_pair(preview: dict, long_index: IndexQuote, short_index: IndexQu
         "minNotional": "10",
         "maxNotional": "10000",
     }
+    if buy in GC_VENUES and sell in GC_VENUES:
+        for leg, venue in ((preview["long"], buy), (preview["short"], sell)):
+            symbol = {"okx": f"{token}-USDT-SWAP", "gate": f"{token}_USDT"}.get(venue, token + "USDT")
+            if isinstance(leg, dict) and (leg.get("contract", symbol) != symbol or leg.get("tokens_per_price_unit", 1) != 1):
+                raise TrialError("gc_market_symbol_mismatch")
+        pair.update(buyEx=f"gc-{buy}", sellEx=f"gc-{sell}")
+    if "aster" in (buy, sell):
+        pair.update(independentLeverageSide="a" if buy == "aster" else "b", independentLeverage="1")
+    return pair
 
 
 IDENTITY = ("name", "type", "buyEx", "sellEx")
@@ -114,8 +128,10 @@ class TrialSaver:
 
     def __init__(
         self, sdk: PairSdk, db: sqlite3.Connection, wait: Callable[[float], None] = sleep,
+        *, gc_catalogue: Callable[[tuple[str, ...]], object] = fetch_gc_catalogue,
     ):
         self.sdk, self.db, self.wait = sdk, db, wait
+        self.gc_catalogue = gc_catalogue
         self.db.execute("""
             CREATE TABLE IF NOT EXISTS astro_trial_submissions (
                 chat_id INTEGER NOT NULL, message_id INTEGER NOT NULL, token TEXT NOT NULL,
@@ -129,7 +145,8 @@ class TrialSaver:
         self, chat_id: int, preview: dict, long_index: IndexQuote, short_index: IndexQuote
     ) -> tuple[str, str | None]:
         pair = build_trial_pair(preview, long_index, short_index)
-        token, _, buy, sell = (pair[field] for field in IDENTITY)
+        token = pair["name"]
+        buy, sell = (native_exchange(pair[field]) for field in ("buyEx", "sellEx"))
         message_id = preview.get("message_id")
         if type(message_id) is not int or message_id <= 0:
             raise TrialError("message_id_required")
@@ -144,6 +161,10 @@ class TrialSaver:
 
         if self._matching_pair(pair) is not None:
             return "already_exists", None
+        symbols = gc_symbols(pair)
+        if symbols and (reason := gc_market_rejection(symbols, self.gc_catalogue(symbols))):
+            raise TrialError(reason)
+        validate_index_time(long_index, short_index)
         with self.db:
             claim = self.db.execute(
                 "INSERT OR IGNORE INTO astro_trial_submissions VALUES (?, ?, ?, ?, ?, NULL)",
@@ -154,13 +175,18 @@ class TrialSaver:
         try:
             self.sdk.add_pair(pair)
             self.wait(3.3)  # The SDK asks clients to wait after an add.
-            saved = self._matching_pair(pair)
+            saved = self._matching_pair(pair, exact=True)
             if saved is None or not isinstance(saved.get("id"), str) or not saved["id"]:
                 return "unconfirmed", None
             for key in ("status", "disableOpen", "disableClose"):
                 if saved.get(key) is not pair[key]:
                     return "unconfirmed", None
             if any(Decimal(str(saved.get(key))) != Decimal(pair[key]) for key in ("openPosition", "maxTradeUSDT")):
+                return "unconfirmed", None
+            if "independentLeverageSide" in pair and (
+                saved.get("independentLeverageSide") != pair["independentLeverageSide"]
+                or Decimal(str(saved.get("independentLeverage"))) != Decimal(pair["independentLeverage"])
+            ):
                 return "unconfirmed", None
         except Exception:
             return "unconfirmed", None
@@ -171,12 +197,16 @@ class TrialSaver:
             )
         return f"saved_{preview['requested_card_state']}", saved["id"]
 
-    def _matching_pair(self, pair: dict) -> dict | None:
+    def _matching_pair(self, pair: dict, *, exact: bool = False) -> dict | None:
         expected = tuple(pair[name] for name in IDENTITY)
+        native = (*expected[:2], *(native_exchange(venue) for venue in expected[2:]))
         same = [
             item for item in self.sdk.list_pairs()
-            if tuple(item.get(name) for name in IDENTITY) == expected
+            if (item.get("name"), item.get("type"), native_exchange(item.get("buyEx")),
+                native_exchange(item.get("sellEx"))) == native
         ]
         if len(same) > 1:
             raise TrialError("ambiguous_existing_route")
-        return same[0] if same else None
+        if not same or (exact and tuple(same[0].get(name) for name in IDENTITY) != expected):
+            return None
+        return same[0]
