@@ -1,6 +1,12 @@
 # Telegram 代币价差监控
 
-监听指定 Telegram 群里配置的币名消息和价差提醒，读取 Bitget（BG）、Binance（BN）、OKX、Aster、Gate 五家的 USDT 本位永续盘口，为每个代币输出最佳正价差方向的 Astro 卡片预览。新预览请求卡片保存为启用状态，卡片仍禁开仓和禁平仓。本项目没有下单入口。
+监听指定 Telegram 群里的币名消息和价差提醒，读取 Bitget（BG）、Binance（BN）、OKX、Aster、Gate 五家的 USDT 本位永续盘口，输出价差方向和 Astro 卡片预览。
+
+> **测试模式 · 禁止开仓和清仓**
+>
+> Telegram 监听只生成预览。隔离联调中创建的 Astro 测试卡保存为启用状态，并设置 `disableOpen=true` 和 `disableClose=true`，禁止开仓和清仓（平仓）。
+>
+> 安装后，可以把本地项目目录交给自己使用的 AI 编程助手，按需修改设置，例如 Telegram 群与发送者、价差阈值或测试卡参数。修改后可先运行下方的离线演示核对输出。
 
 ## 先跑离线演示
 
@@ -22,7 +28,7 @@ INFO token_skipped token=BTC reason=insufficient_quotes valid=1
 INFO duplicate_message message_id=42
 ```
 
-`card_preview` 后面的 JSON 包含标准代币代码、两腿的场所和原生合约代码、原始及标准化买卖一、报价时间、毛价差和请求状态 `paused`。备注显示「开仓毛价差，未扣手续费和滑点」。
+`card_preview` 后面的 JSON 包含标准代币代码、两腿的场所和原生合约代码、原始及标准化买卖一、报价时间、毛价差和请求状态 `enabled`。备注显示「开仓毛价差，未扣手续费和滑点」。
 
 ## 安装和查询实时报价
 
