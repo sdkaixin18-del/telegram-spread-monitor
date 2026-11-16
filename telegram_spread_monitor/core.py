@@ -15,6 +15,7 @@ from typing import Protocol
 LOG = logging.getLogger("spread_monitor")
 VENUES = ("BG", "BN", "OKX", "Aster", "Gate")
 GROSS_NOTE = "开仓毛价差，未扣手续费和滑点"
+REQUESTED_CARD_STATE = "enabled"
 # Price denominations of known exchange base symbols. A venue's contract size
 # (e.g. Gate quanto_multiplier or OKX ctVal) is a different quantity.
 BUNDLES = {
@@ -309,7 +310,7 @@ class Monitor:
             "short": best.short.details(),
             "gross_spread_pct": format(best.gross_pct.normalize(), "f"),
             "price_unit": "USDT / 1 " + token,
-            "requested_card_state": "paused",
+            "requested_card_state": REQUESTED_CARD_STATE,
             "note": GROSS_NOTE,
         }
         payload = json.dumps(card, ensure_ascii=False, separators=(",", ":"))

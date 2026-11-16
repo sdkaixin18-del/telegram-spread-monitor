@@ -7,7 +7,7 @@ import re
 from dataclasses import replace
 from decimal import Decimal
 
-from .core import LOG, Monitor, Signal, now_ms
+from .core import LOG, REQUESTED_CARD_STATE, Monitor, Signal, now_ms
 
 TICKER = re.compile(r"\$?([A-Z0-9]{1,32})(?:\s*[/_-]\s*USDT)?", re.I | re.ASCII)
 HEADER = re.compile(r"【([^】]+)】")
@@ -100,7 +100,7 @@ class MessagePreviewMonitor:
             "status": "preview",
             "message_id": signal.message_id,
             "token": ticker,
-            "requested_card_state": "paused",
+            "requested_card_state": REQUESTED_CARD_STATE,
             **details,
         }, ensure_ascii=False, separators=(",", ":"))
         if self.store.save(signal, ticker, payload):

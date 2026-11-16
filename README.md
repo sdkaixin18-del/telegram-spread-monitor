@@ -1,6 +1,6 @@
 # Telegram 代币价差监控
 
-监听指定 Telegram 群里配置的币名消息和价差提醒，读取 Bitget（BG）、Binance（BN）、OKX、Aster、Gate 五家的 USDT 本位永续盘口，为每个代币输出最佳正价差方向的 Astro 卡片预览。预览请求卡片保持暂停。本项目没有下单入口。
+监听指定 Telegram 群里配置的币名消息和价差提醒，读取 Bitget（BG）、Binance（BN）、OKX、Aster、Gate 五家的 USDT 本位永续盘口，为每个代币输出最佳正价差方向的 Astro 卡片预览。新预览请求卡片保存为启用状态，卡片仍禁开仓和禁平仓。本项目没有下单入口。
 
 ## 先跑离线演示
 
@@ -111,9 +111,24 @@ sqlite3 .local/monitor.sqlite3 \
 
 ## 真实 Astro 建卡
 
+`astro_live` 是单次只读复核入口。它同时读取五家永续盘口和交易所指数价，按未四舍五入的毛价差排序，筛选严格大于 4% 且空腿指数价较高的 FF 方向。本次试验覆盖已核对计价口径的 BTC 和 ETH。通过初筛的候选须进一步核验双腿同数量深度，才可提交 Astro。
+
+```bash
+python -m telegram_spread_monitor.astro_live --token BTC
+python -m telegram_spread_monitor.astro_live --watch-log "/path/to/telegram-listener.log"
+```
+
+第二条命令跟随已经运行的 `listen-bot --message-preview` 日志，复核启动后配置的币名发送者的第一条已识别币名消息。复核结果包含双腿指数、报价时间和跳过原因。常驻监听和单次复核的输出各自记录。
+
+### 隔离 SDK 联调
+
+`astro_trial.py` 把 Telegram 流程的新预览转成启用的 FF 测试卡。测试条件为开仓价差严格高于 4%、空腿指数价高于多腿，且指数报价与标的和交易所匹配、时间有效。保存字段为 `status=true`、`disableOpen=true`、`disableClose=true`、`openPosition=0.04` 和 `maxTradeUSDT=10000`。SDK 回读确认卡片状态与禁开、禁平设置后才标记保存成功。已有 `paused` 预览仍保存为暂停。提交不明时保留本地防重记录。联调标的为 BTC、ETH。
+
+联调由测试程序提供断网 Astro SDK 客户端。常驻监听只生成预览，SDK 官方文档说明新增 Pair 可能重启 Core。[Astro SDK 文档](https://raw.githubusercontent.com/astro-btc/Astro/main/SDK-API.md)
+
 Astro 官方 SDK 支持新增和读取 Pair，现有系统通过保存后回读卡片来确认成功。官方文档说明新增 Pair 可能触发 Astro Core 重启。当前 Telegram 监听只输出预览，暂未提供真实建卡开关。[Astro SDK 官方文档](https://github.com/astro-btc/Astro/blob/main/SDK-API.md#62-新增-pair)
 
-接通机器人需提供它的 `@用户名` 和一次手动保存暂停卡的记录。请保留代币、做多和做空交易所、命令或按钮、成功回执中的卡片标识，账号和密钥可打码。如果使用的是 Astro 网页或 SDK，请指出实际入口。接入时会按核实的入口配置，要求成功回执或卡片回读能明确对应两腿及暂停状态。提交前持久化唯一键，提交结果不明时保留防重记录。
+接通机器人需提供它的 `@用户名` 和一次手动保存卡片的记录。请保留代币、做多和做空交易所、命令或按钮、成功回执中的卡片标识，账号和密钥可打码。如果使用的是 Astro 网页或 SDK，请指出实际入口。接入时会按核实的入口配置，要求成功回执或卡片回读能明确对应两腿、请求状态和禁开、禁平设置。提交前持久化唯一键，提交结果不明时保留防重记录。
 
 ## 验收命令
 
