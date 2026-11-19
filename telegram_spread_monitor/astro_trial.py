@@ -112,12 +112,12 @@ def build_trial_pair(preview: dict, long_index: IndexQuote, short_index: IndexQu
         "minNotional": "10",
         "maxNotional": str(CARD_LIMIT_USDT),
     }
-    if buy in GC_VENUES and sell in GC_VENUES:
-        for leg, venue in ((preview["long"], buy), (preview["short"], sell)):
-            symbol = {"okx": f"{token}-USDT-SWAP", "gate": f"{token}_USDT"}.get(venue, token + "USDT")
-            if isinstance(leg, dict) and (leg.get("contract", symbol) != symbol or leg.get("tokens_per_price_unit", 1) != 1):
-                raise TrialError("gc_market_symbol_mismatch")
-        pair.update(buyEx=f"gc-{buy}", sellEx=f"gc-{sell}")
+    for field, leg, venue in (("buyEx", preview["long"], buy), ("sellEx", preview["short"], sell)):
+        symbol = {"okx": f"{token}-USDT-SWAP", "gate": f"{token}_USDT"}.get(venue, token + "USDT")
+        if isinstance(leg, dict) and (leg.get("contract", symbol) != symbol or leg.get("tokens_per_price_unit", 1) != 1):
+            raise TrialError("gc_market_symbol_mismatch")
+        if venue in GC_VENUES:
+            pair[field] = f"gc-{venue}"
     if "aster" in (buy, sell):
         pair.update(independentLeverageSide="a" if buy == "aster" else "b", independentLeverage=pair["leverage"])
     return pair

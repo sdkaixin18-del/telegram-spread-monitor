@@ -8,6 +8,9 @@ from telegram_spread_monitor.astro_trial import IndexQuote
 
 
 class TrialMarket:
+    async def get(self, venue, path, params):
+        return [{"symbol": "BINANCE_FUTURE_BTC_USDT", "tag": "", "state": "live"}]
+
     async def catalog(self):
         return {
             venue: {"BTC": Contract(venue, "BTCUSDT", "BTC")} if venue in {"BG", "BN"} else "timeout"

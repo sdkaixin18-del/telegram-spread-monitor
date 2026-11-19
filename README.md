@@ -125,7 +125,7 @@ python -m telegram_spread_monitor.astro_live --token BTC
 python -m telegram_spread_monitor.production
 ```
 
-启动时会读取真实卡片列表，成功后记录 `astro_connected`。收到指定成员的币名后，先核对普通市场盘口和指数，再用多腿 1,000 USDT 和空腿相同数量复核深度。可成交毛价差须严格超过 4%，且空腿指数价高于多腿。两腿使用支持的 GC 通道，涉及 Bitget 时整对走普通交易所。
+启动时会读取真实卡片列表，成功后记录 `astro_connected`。收到指定成员的币名后，先核对普通市场盘口和指数，再用多腿 1,000 USDT 和空腿相同数量复核深度。可成交毛价差须严格超过 4%，且空腿指数价高于多腿。每条腿独立选通道。Bitget（BG）使用普通通道，Binance、OKX、Gate 和 Aster 各自使用 GC。例如，Binance 多 / Bitget 空保存为 `gc-binance / bitget`。
 
 新卡默认启用。Astro 的开仓和清仓阈值分别写入 `openPosition=0.04`、`closePosition=0.005`。程序回读卡号、两腿、启用状态、开平仓开关、阈值、额度和杠杆，全部匹配才记录 `saved_enabled`。同标的同方向已有卡时跳过。提交回执不明时保留本地防重记录。Astro 官方说明新增卡片会导致 Core 重启。[Astro SDK 文档](https://github.com/astro-btc/Astro/blob/main/SDK-API.md#62-新增-pair)
 

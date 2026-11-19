@@ -5,6 +5,7 @@ from decimal import Decimal
 
 from telegram_spread_monitor.astro_trial import IndexQuote, TrialError, TrialSaver, build_trial_pair
 from telegram_spread_monitor.core import now_ms
+from telegram_spread_monitor.astro_gc import gc_symbols
 
 
 def candidate(**extra):
@@ -48,7 +49,7 @@ class TrialTests(unittest.TestCase):
         self.assertIs(pair["status"], True)
         self.assertIs(pair["disableOpen"], False)
         self.assertIs(pair["disableClose"], False)
-        self.assertEqual((pair["buyEx"], pair["sellEx"]), ("bitget", "binance"))
+        self.assertEqual((pair["buyEx"], pair["sellEx"]), ("bitget", "gc-binance"))
         for preview, quote, reason in (
             (candidate(), replace(short, price=long.price), "short_index_not_above_long"),
             (candidate(), replace(short, venue="okx"), "index_does_not_match_route"),
@@ -60,6 +61,17 @@ class TrialTests(unittest.TestCase):
         ):
             with self.subTest(reason=reason), self.assertRaisesRegex(TrialError, reason):
                 build_trial_pair(preview, long, quote)
+
+    def test_bitget_mixed_routes_in_both_directions(self):
+        low, high = indices()
+        for other in ("binance", "okx", "gate", "aster"):
+            for buy, sell in (("bitget", other), (other, "bitget")):
+                with self.subTest(buy=buy, sell=sell):
+                    preview = candidate(long={"exchange": buy}, short={"exchange": sell})
+                    pair = build_trial_pair(preview, replace(low, venue=buy), replace(high, venue=sell))
+                    expected = ("bitget", f"gc-{other}") if buy == "bitget" else (f"gc-{other}", "bitget")
+                    self.assertEqual((pair["buyEx"], pair["sellEx"]), expected)
+                    self.assertEqual(gc_symbols(pair), (f"{other.upper()}_FUTURE_BTC_USDT",))
 
     def test_legacy_preview_keeps_its_explicit_paused_state(self):
         pair = build_trial_pair(candidate(requested_card_state="paused"), *indices())
@@ -143,7 +155,7 @@ class TrialTests(unittest.TestCase):
             with self.subTest(changes=changes):
                 db = sqlite3.connect(":memory:")
                 self.addCleanup(db.close)
-                saver = TrialSaver(ReadbackSdk(changes), db, wait=lambda _: None)
+                saver = TrialSaver(ReadbackSdk(changes), db, wait=lambda _: None, gc_catalogue=live_gc_rows)
                 self.assertEqual(saver.save(-1001, candidate(), *indices()), result)
 
     def test_uncertain_add_is_never_retried_even_if_absent(self):
@@ -160,8 +172,8 @@ class TrialTests(unittest.TestCase):
         sdk = FailedSdk()
         db = sqlite3.connect(":memory:")
         self.addCleanup(db.close)
-        self.assertEqual(TrialSaver(sdk, db).save(-1001, candidate(), *indices()), ("unconfirmed", None))
+        self.assertEqual(TrialSaver(sdk, db, gc_catalogue=live_gc_rows).save(-1001, candidate(), *indices()), ("unconfirmed", None))
         self.assertEqual(
-            TrialSaver(sdk, db).save(-1001, candidate(), *indices()), ("duplicate_or_pending", None),
+            TrialSaver(sdk, db, gc_catalogue=live_gc_rows).save(-1001, candidate(), *indices()), ("duplicate_or_pending", None),
         )
         self.assertEqual(sdk.add_count, 1)
