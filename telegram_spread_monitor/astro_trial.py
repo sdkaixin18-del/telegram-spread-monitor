@@ -12,6 +12,7 @@ from .astro_gc import GC_VENUES, fetch_gc_catalogue, gc_market_rejection, gc_sym
 from .core import now_ms
 
 OPEN_PCT = Decimal("4")
+CARD_LIMIT_USDT = Decimal("1000")
 TEST_ASSETS = frozenset({"BTC", "ETH", "QNT"})
 VENUE_MAP = {
     "bg": "bitget",
@@ -104,12 +105,12 @@ def build_trial_pair(preview: dict, long_index: IndexQuote, short_index: IndexQu
         "disableOpen": requested_state == "paused",
         "disableClose": requested_state == "paused",
         "openPosition": "0.04",
-        "closePosition": "0",
-        "maxTradeUSDT": "10",
+        "closePosition": "0.005",
+        "maxTradeUSDT": str(CARD_LIMIT_USDT),
         "leverage": "2",
         "startTime": "0",
         "minNotional": "10",
-        "maxNotional": "10",
+        "maxNotional": str(CARD_LIMIT_USDT),
     }
     if buy in GC_VENUES and sell in GC_VENUES:
         for leg, venue in ((preview["long"], buy), (preview["short"], sell)):

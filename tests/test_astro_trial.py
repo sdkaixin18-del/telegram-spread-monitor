@@ -42,8 +42,9 @@ class TrialTests(unittest.TestCase):
     def test_settings_and_index_rejections(self):
         long, short = indices()
         pair = build_trial_pair(candidate(), long, short)
-        self.assertEqual((pair["type"], pair["openPosition"], pair["maxTradeUSDT"]), ("FF", "0.04", "10"))
-        self.assertEqual((pair["maxNotional"], pair["leverage"]), ("10", "2"))
+        self.assertEqual((pair["type"], pair["openPosition"], pair["maxTradeUSDT"]), ("FF", "0.04", "1000"))
+        self.assertEqual((pair["maxNotional"], pair["leverage"]), ("1000", "2"))
+        self.assertEqual(pair["closePosition"], "0.005")
         self.assertIs(pair["status"], True)
         self.assertIs(pair["disableOpen"], False)
         self.assertIs(pair["disableClose"], False)
@@ -136,6 +137,7 @@ class TrialTests(unittest.TestCase):
             ({"disableOpen": True}, ("unconfirmed", None)),
             ({"disableClose": True}, ("unconfirmed", None)),
             ({"leverage": "1"}, ("unconfirmed", None)),
+            ({"closePosition": "0"}, ("unconfirmed", None)),
             ({"maxNotional": "10000"}, ("unconfirmed", None)),
         ):
             with self.subTest(changes=changes):

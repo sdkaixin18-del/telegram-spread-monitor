@@ -39,10 +39,10 @@ class LiveIndexTest(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(report["status"], status)
                 if status == "depth_review_required":
                     self.assertEqual(report["candidate"]["type"], "FF")
-                    self.assertIs(report["candidate"]["status"], False)
-                    self.assertIs(report["candidate"]["disableOpen"], True)
-                    self.assertIs(report["candidate"]["disableClose"], True)
-                    self.assertEqual(report["candidate"]["maxTradeUSDT"], "10")
+                    self.assertIs(report["candidate"]["status"], True)
+                    self.assertIs(report["candidate"]["disableOpen"], False)
+                    self.assertIs(report["candidate"]["disableClose"], False)
+                    self.assertEqual(report["candidate"]["maxTradeUSDT"], "1000")
                     self.assertEqual(report["candidate"]["leverage"], "2")
 
     async def test_openai_does_not_compare_unverified_denominations(self):
