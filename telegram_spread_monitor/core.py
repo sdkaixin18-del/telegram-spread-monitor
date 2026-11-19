@@ -15,7 +15,7 @@ from typing import Protocol
 LOG = logging.getLogger("spread_monitor")
 VENUES = ("BG", "BN", "OKX", "Aster", "Gate")
 GROSS_NOTE = "开仓毛价差，未扣手续费和滑点"
-REQUESTED_CARD_STATE = "enabled"
+REQUESTED_CARD_STATE = "paused"
 # Price denominations of known exchange base symbols. A venue's contract size
 # (e.g. Gate quanto_multiplier or OKX ctVal) is a different quantity.
 BUNDLES = {

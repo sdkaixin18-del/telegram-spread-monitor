@@ -12,7 +12,7 @@ from .astro_gc import GC_VENUES, fetch_gc_catalogue, gc_market_rejection, gc_sym
 from .core import now_ms
 
 OPEN_PCT = Decimal("4")
-TEST_ASSETS = frozenset({"BTC", "ETH"})
+TEST_ASSETS = frozenset({"BTC", "ETH", "QNT"})
 VENUE_MAP = {
     "bg": "bitget",
     "bitget": "bitget",
@@ -63,9 +63,10 @@ def validate_index_time(long_index: IndexQuote, short_index: IndexQuote) -> None
         raise TrialError("index_time_invalid")
 
 
-def build_trial_pair(preview: dict, long_index: IndexQuote, short_index: IndexQuote) -> dict:
+def build_trial_pair(preview: dict, long_index: IndexQuote, short_index: IndexQuote, *, manual_observation: bool = False) -> dict:
     token = preview.get("token")
-    if not isinstance(token, str) or token not in TEST_ASSETS:
+    verified_observation = manual_observation and token == "OPENAI" and preview.get("requested_card_state") == "paused"
+    if not isinstance(token, str) or (token not in TEST_ASSETS and not verified_observation):
         # This isolated trial has unit/identity evidence only for its fixtures.
         raise TrialError("asset_not_verified_for_trial")
     requested_state = preview.get("requested_card_state")
@@ -77,9 +78,14 @@ def build_trial_pair(preview: dict, long_index: IndexQuote, short_index: IndexQu
         spread = Decimal(str(preview.get("gross_spread_pct")))
     except InvalidOperation as error:
         raise TrialError("invalid_opening_spread") from error
-    if not spread.is_finite() or spread <= OPEN_PCT:
+    manual_paused = manual_observation and token in ("OPENAI", "QNT") and requested_state == "paused"
+    if not spread.is_finite() or (spread <= OPEN_PCT and not manual_paused):
         raise TrialError("opening_spread_not_above_4pct")
     buy, sell = ff_venue(preview.get("long")), ff_venue(preview.get("short"))
+    if token == "OPENAI" and {buy, sell} != {"binance", "bitget"}:
+        raise TrialError("openai_contract_identity_unverified")
+    if token == "QNT" and not {buy, sell} <= {"binance", "gate"}:
+        raise TrialError("qnt_contract_identity_unverified")
     if buy == sell:
         raise TrialError("same_exchange")
     if (long_index.token, long_index.venue, short_index.token, short_index.venue) != (token, buy, token, sell):
@@ -99,11 +105,11 @@ def build_trial_pair(preview: dict, long_index: IndexQuote, short_index: IndexQu
         "disableClose": requested_state == "paused",
         "openPosition": "0.04",
         "closePosition": "0",
-        "maxTradeUSDT": "1000",
+        "maxTradeUSDT": "10",
         "leverage": "2",
         "startTime": "0",
         "minNotional": "10",
-        "maxNotional": "1000",
+        "maxNotional": "10",
     }
     if buy in GC_VENUES and sell in GC_VENUES:
         for leg, venue in ((preview["long"], buy), (preview["short"], sell)):
@@ -124,10 +130,11 @@ class TrialSaver:
 
     def __init__(
         self, sdk: PairSdk, db: sqlite3.Connection, wait: Callable[[float], None] = sleep,
-        *, gc_catalogue: Callable[[tuple[str, ...]], object] = fetch_gc_catalogue,
+        *, before_claim: Callable[[], None] | None = None, gc_catalogue: Callable[[tuple[str, ...]], object] = fetch_gc_catalogue,
     ):
         self.sdk, self.db, self.wait = sdk, db, wait
         self.gc_catalogue = gc_catalogue
+        self.before_claim = before_claim
         self.db.execute("""
             CREATE TABLE IF NOT EXISTS astro_trial_submissions (
                 chat_id INTEGER NOT NULL, message_id INTEGER NOT NULL, token TEXT NOT NULL,
@@ -138,9 +145,10 @@ class TrialSaver:
         """)
 
     def save(
-        self, chat_id: int, preview: dict, long_index: IndexQuote, short_index: IndexQuote
+        self, chat_id: int, preview: dict, long_index: IndexQuote, short_index: IndexQuote,
+        *, manual_observation: bool = False,
     ) -> tuple[str, str | None]:
-        pair = build_trial_pair(preview, long_index, short_index)
+        pair = build_trial_pair(preview, long_index, short_index, manual_observation=manual_observation)
         token = pair["name"]
         buy, sell = (native_exchange(pair[field]) for field in ("buyEx", "sellEx"))
         message_id = preview.get("message_id")
@@ -161,6 +169,8 @@ class TrialSaver:
         if symbols and (reason := gc_market_rejection(symbols, self.gc_catalogue(symbols))):
             raise TrialError(reason)
         validate_index_time(long_index, short_index)
+        if self.before_claim:
+            self.before_claim()
         with self.db:
             claim = self.db.execute(
                 "INSERT OR IGNORE INTO astro_trial_submissions VALUES (?, ?, ?, ?, ?, NULL)",

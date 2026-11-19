@@ -90,7 +90,7 @@ class MonitorTests(unittest.IsolatedAsyncioTestCase):
                 parsed = json.loads(payload)
                 self.assertEqual(parsed["gross_spread_pct"], "1.5")
                 self.assertEqual(parsed["direction"], "BG 多 / BN 空")
-                self.assertEqual(parsed["requested_card_state"], "enabled")
+                self.assertEqual(parsed["requested_card_state"], "paused")
                 self.assertIn("未扣手续费和滑点", parsed["note"])
             finally:
                 store.close()

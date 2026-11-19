@@ -104,6 +104,8 @@ async def preflight(market: PublicMarket, token: str, message_id: int | None) ->
     catalog = await market.catalog()
 
     async def sample(venue: str) -> tuple[Quote, IndexQuote] | str:
+        if token == "QNT" and venue not in {"BN", "Gate"}:
+            return "qnt_contract_identity_unverified"
         contracts = catalog[venue]
         if isinstance(contracts, str):
             return f"catalog_{contracts}"

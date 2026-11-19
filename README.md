@@ -2,9 +2,9 @@
 
 只监听指定 Telegram 群里配置的一位成员，按数字用户 ID 匹配。读取 Bitget（BG）、Binance（BN）、OKX、Aster、Gate 五家的 USDT 本位永续盘口，输出价差方向和 Astro 卡片预览。
 
-> **测试模式**
+> **默认预览，生产入口可建立真实暂停卡**
 >
-> Telegram 常驻监听只生成预览。断网 SDK 联调生成的 FF 卡启用，限额为 1,000 USDT、杠杆为 2 倍，卡片配置允许 Astro 按阈值开仓和清仓。
+> `listen-bot` 只生成预览。配置了 Astro 的生产入口会真实保存 FF 暂停卡，禁止开仓和清仓。每张卡和每次交易的上限均为 10 USDT，杠杆为 2 倍。
 >
 > 安装后，可以把本地项目目录交给自己使用的 AI 编程助手，按需修改设置，例如 Telegram 群与发送者、价差阈值或测试卡参数。修改后可先运行下方的离线演示核对输出。
 
@@ -28,7 +28,7 @@ INFO token_skipped token=BTC reason=insufficient_quotes valid=1
 INFO duplicate_message message_id=42
 ```
 
-`card_preview` 后面的 JSON 包含标准代币代码、两腿的场所和原生合约代码、原始及标准化买卖一、报价时间、毛价差和请求状态 `enabled`。备注显示「开仓毛价差，未扣手续费和滑点」。
+`card_preview` 后面的 JSON 包含标准代币代码、两腿的场所和原生合约代码、原始及标准化买卖一、报价时间、毛价差和请求状态 `paused`。备注显示「开仓毛价差，未扣手续费和滑点」。
 
 ## 安装和查询实时报价
 
@@ -109,28 +109,25 @@ sqlite3 .local/monitor.sqlite3 \
 
 ## 真实 Astro 建卡
 
-`astro_live` 是单次只读复核入口。它同时读取五家永续盘口和交易所指数价，按未四舍五入的毛价差排序，筛选严格大于 4% 且空腿指数价较高的 FF 方向。本次试验覆盖已核对计价口径的 BTC 和 ETH。通过初筛的候选须进一步核验双腿同数量深度，才可提交 Astro。
+`astro_live` 是单次只读复核入口。它同时读取五家永续盘口和交易所指数价，按未四舍五入的毛价差排序，筛选严格大于 4% 且空腿指数价较高的 FF 方向。常规复核支持 BTC、ETH，以及 Binance 和 Gate 上的 Quant 代币 QNT。其他场所的 QNT 可能代表不同资产。OPENAI 的同名合约也使用不同计价单位，常规自动建卡不包含 OPENAI。
 
 ```bash
 python -m telegram_spread_monitor.astro_live --token BTC
-python -m telegram_spread_monitor.astro_live --watch-log "/path/to/telegram-listener.log"
 ```
 
-第二条命令跟随已经运行的 `listen-bot` 日志，复核启动后收到的第一条已识别币名消息。复核结果包含双腿指数、报价时间和跳过原因。常驻监听和单次复核的输出各自记录。
+### 在已有 Astro 套利面板的服务器上运行
 
-### 隔离 SDK 联调
+生产入口依赖现有面板提供的 Python 模块 `app.astro_sdk`、`app.astro_spread_scanner` 及其依赖。先把面板 backend 目录加入 `PYTHONPATH`，并使用能导入这两个模块的 Python 环境。生产入口连接同机的 `https://127.0.0.1:8443`。
 
-盘口、指数和价差均使用交易所普通市场数据。通过复核后，Binance、OKX、Aster、Gate 两腿均使用 Gate CrossEx（GC）执行代码。任一腿是 Bitget 时，两腿使用普通交易所代码。提交前核实 CrossEx 目录内两腿对应的 USDT 永续合约均为 `live`。缺失、停用或合约身份不符的 GC 路线跳过。Aster 合约腿独立设为 2 倍。
+通过服务管理器向进程注入 `TG_BOT_TOKEN`、`TG_CHAT_ID`、`TG_SENDER_ID` 和 `STATE_DB_PATH`（可写且持久的 SQLite 文件路径），以及面板 SDK 的 `ASTRO_SDK_ADMIN_PREFIX`、`ASTRO_SDK_API_KEY` 和相应的 TLS 配置。生产入口直接读取环境变量。同一个 Telegram 机器人只运行一个监听进程。
 
-同一标的和买卖方向，普通版和 GC 版共用防重记录。保存回读核对实际提交的交易所代码。
+```bash
+python -m telegram_spread_monitor.production
+```
 
-`astro_trial.py` 把 Telegram 流程的新预览转成启用的 FF 卡。真实开仓毛价差须严格高于 4%，且空腿指数价高于多腿。新卡上限为 1,000 USDT（`maxTradeUSDT` 和 `maxNotional`），杠杆为 2 倍。`disableOpen=false`、`disableClose=false` 允许 Astro 按开仓阈值 4% 和清仓阈值 0% 执行。SDK 回读核对这些字段后才标记保存成功。已有 `paused` 预览仍保存为暂停。提交不明时保留本地防重记录。联调标的为 BTC、ETH。
+启动时会读取真实卡片列表，成功后记录 `astro_connected`。收到指定成员的币名后，先核对普通市场盘口和指数，再用多腿 10 USDT 和空腿相同数量复核深度。可成交毛价差须严格超过 4%，且空腿指数价高于多腿。两腿使用支持的 GC 通道，涉及 Bitget 时整对走普通交易所。
 
-联调由测试程序提供断网 Astro SDK 客户端。常驻监听只生成预览，SDK 官方文档说明新增 Pair 可能重启 Core。[Astro SDK 文档](https://raw.githubusercontent.com/astro-btc/Astro/main/SDK-API.md)
-
-Astro 官方 SDK 支持新增和读取 Pair，现有系统通过保存后回读卡片来确认成功。官方文档说明新增 Pair 可能触发 Astro Core 重启。当前 Telegram 监听只输出预览，暂未提供真实建卡开关。[Astro SDK 官方文档](https://github.com/astro-btc/Astro/blob/main/SDK-API.md#62-新增-pair)
-
-接通机器人需提供它的 `@用户名` 和一次手动保存卡片的记录。请保留代币、做多和做空交易所、命令或按钮、成功回执中的卡片标识，账号和密钥可打码。如果使用的是 Astro 网页或 SDK，请指出实际入口。接入时会按核实的入口配置，要求成功回执或卡片回读能明确对应两腿、请求状态和开仓、清仓设置。提交前持久化唯一键，提交结果不明时保留防重记录。
+新卡保存为暂停，开仓阈值为 4%，清仓阈值为 0%。程序核对 Astro 返回的卡号、两腿、暂停状态、禁开禁清、额度和杠杆后才记录 `saved_paused`。同标的同方向已有卡时跳过。提交回执不明时保留本地防重记录。Astro 官方说明新增卡片会导致 Core 重启。[Astro SDK 文档](https://github.com/astro-btc/Astro/blob/main/SDK-API.md#62-新增-pair)
 
 ## 验收命令
 
